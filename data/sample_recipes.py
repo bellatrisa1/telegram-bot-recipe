@@ -359,3 +359,14 @@ SAMPLE_RECIPES = [
                      'расплавился.',
      'image_url': None},
 ]
+
+# Complete an originally underspecified bundled salad while retaining its stable name.
+from data.recipe_repairs import GREEK_SALAD_COMPLETE
+
+SAMPLE_RECIPES = [GREEK_SALAD_COMPLETE.copy() if recipe["name"] == "Greek Salad" else recipe
+                  for recipe in SAMPLE_RECIPES]
+
+# One seed collection, using the same Recipe dictionaries as the original catalog.
+from data.popular_recipes import POPULAR_RECIPES
+
+SAMPLE_RECIPES.extend(POPULAR_RECIPES)

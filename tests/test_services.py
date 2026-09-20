@@ -48,8 +48,8 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
             results = await service.search_by_ingredients(session, [' CHICKEN  ', 'rice', 'tomato'])
             self.assertEqual([r.name for r in results], ['Chicken Rice Bowl'])
             self.assertEqual(await service.search_by_ingredients(session, ['', ' ']), [])
-            self.assertEqual(len(await service.get_categories(session)), 7)
-            self.assertEqual(len(await service.get_recipes_by_category(session, 'Pasta')), 6)
+            self.assertEqual(len(await service.get_categories(session)), 12)
+            self.assertEqual(len(await service.get_recipes_by_category(session, 'Pasta')), 14)
             self.assertIsNotNone(await service.get_random_recipe(session))
 
     async def test_users_favorites_and_cascade(self):
@@ -144,7 +144,8 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as session:
             self.assertEqual((await service.get_or_create_user(session, 987, 'ru')).language, 'en')
             results = await service.search_by_name(session, '  КАРБОНАРА ')
-            self.assertEqual(results[0].name, 'Spaghetti Carbonara')
+            self.assertEqual(results[0].name, 'Паста Карбонара')
+            self.assertIn('Spaghetti Carbonara', [recipe.name for recipe in results])
             self.assertIn('Приготовление', format_recipe(results[0], 'ru'))
             self.assertIn('Instructions', format_recipe(results[0], 'en'))
             results = await service.search_by_ingredients(session, ['КУРИЦА', ' рис ', 'помидор'])
@@ -185,8 +186,8 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
             ]:
                 self.assertIn(expected, [r.name for r in await service.search_by_ingredients(session, query)])
             self.assertEqual(await service.search_by_ingredients(session, ['тунец', 'шпинат']), [])
-            self.assertEqual(len(await service.get_recipes_by_category(session, 'Завтраки')), 5)
-            self.assertEqual(len(await service.get_recipes_by_category(session, 'Паста')), 6)
+            self.assertEqual(len(await service.get_recipes_by_category(session, 'Завтраки')), 12)
+            self.assertEqual(len(await service.get_recipes_by_category(session, 'Паста')), 14)
             for sample in SAMPLE_RECIPES[7:]:
                 recipe = (await service.search_by_name(session, sample['name']))[0]
                 for field, value in sample.items():
@@ -220,8 +221,199 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         await db.init_db()
         await db.init_db()
         async with self.sessions() as session:
-            self.assertEqual(await session.scalar(select(func.count(Recipe.id))), 19)
+            self.assertEqual(await session.scalar(select(func.count(Recipe.id))), len(SAMPLE_RECIPES))
             self.assertEqual((await session.get(Recipe, original_id)).description, 'User edited description')
             self.assertEqual((await session.get(Recipe, existing_id)).description, 'User edited borscht')
             self.assertEqual(len(await service.get_favorite_recipes(session, 123)), 2)
             self.assertEqual(await session.scalar(select(func.count(User.id))), 1)
+
+    async def test_lookup_local_and_invalid_queries_skip_provider(self):
+        from unittest.mock import AsyncMock
+        from services.recipe_lookup import find_or_fetch_recipe, normalize_query
+        provider = AsyncMock()
+        self.assertEqual(normalize_query('  ТИРАМИСУ   '), 'тирамису')
+        for query in ['Борщ', '  БОРЩ  ', 'блины', 'carbonara']:
+            result = await find_or_fetch_recipe(query, provider)
+            self.assertEqual(result.status, 'local')
+            self.assertIsNotNone(result.recipe)
+        for query in ['', '1', '<script>', 'x' * 201]:
+            self.assertEqual((await find_or_fetch_recipe(query, provider)).status, 'invalid_query')
+        provider.fetch.assert_not_called()
+
+    async def test_lookup_caches_validated_recipe_and_favorites(self):
+        from unittest.mock import AsyncMock
+        from services.recipe_lookup import find_or_fetch_recipe
+        payload = {**SAMPLE_RECIPES[-1], 'name': 'Новое тестовое блюдо',
+                   'ingredients': ['сыр — 50 г', 'яйца — 2 шт.'],
+                   'instructions': ['Смешайте ингредиенты.', 'Приготовьте до готовности.'],
+                   'source': 'external'}
+        provider = AsyncMock()
+        provider.fetch.return_value = payload
+        first = await find_or_fetch_recipe('  Новое   тестовое блюдо ', provider)
+        self.assertEqual(first.status, 'cached')
+        for query in ['НОВОЕ ТЕСТОВОЕ БЛЮДО', ' новое тестовое блюдо  ']:
+            second = await find_or_fetch_recipe(query, provider)
+            self.assertEqual(second.recipe.id, first.recipe.id)
+            self.assertEqual(second.status, 'local')
+        provider.fetch.assert_awaited_once_with('новое тестовое блюдо')
+        async with self.sessions() as session:
+            self.assertEqual(first.recipe.source, 'external')
+            self.assertEqual(await session.scalar(select(func.count(Recipe.id))), len(SAMPLE_RECIPES) + 1)
+            await service.add_favorite(session, 999, first.recipe.id)
+            await service.add_favorite(session, 999, first.recipe.id)
+            self.assertEqual([r.id for r in await service.get_favorite_recipes(session, 999)], [first.recipe.id])
+            await service.clear_favorite(session, 999, first.recipe.id)
+            self.assertFalse(await service.is_favorite(session, 999, first.recipe.id))
+            self.assertIn(first.recipe.id, [r.id for r in await service.search_by_ingredients(session, ['яйца', 'сыр'])])
+
+    async def test_lookup_failure_and_validation_never_cache(self):
+        from unittest.mock import AsyncMock
+        from services.recipe_lookup import find_or_fetch_recipe
+        from services.external_recipe_provider import ProviderError
+        provider = AsyncMock()
+        for failure in [ProviderError('do not log secret response'), TimeoutError()]:
+            provider.fetch.side_effect = failure
+            self.assertEqual((await find_or_fetch_recipe('Неизвестное блюдо', provider)).status, 'provider_error')
+        provider.fetch.side_effect = None
+        for invalid in [{}, {'name': 'Incomplete'}, [], {'name': '<b>Блюдо</b>'}]:
+            provider.fetch.return_value = invalid
+            self.assertEqual((await find_or_fetch_recipe('Неизвестное блюдо', provider)).status, 'provider_error')
+        provider.fetch.return_value = None
+        self.assertEqual((await find_or_fetch_recipe('Неизвестное блюдо', provider)).status, 'not_found')
+        async with self.sessions() as session:
+            self.assertEqual(await session.scalar(select(func.count(Recipe.id))), len(SAMPLE_RECIPES))
+
+    async def test_lookup_concurrent_aliases_share_one_recipe(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from services.recipe_lookup import find_or_fetch_recipe
+        from database.models import RecipeLookup
+        provider = AsyncMock()
+        provider.fetch.return_value = {**SAMPLE_RECIPES[-1], 'name': 'Новое блюдо',
+                                      'ingredients': ['яйца — 2 шт.'], 'instructions': ['Приготовьте яйца.']}
+        results = await asyncio.gather(*(find_or_fetch_recipe(q, provider) for q in ['new dish', 'новое блюдо', ' NEW DISH ']))
+        self.assertEqual(len({result.recipe.id for result in results}), 1)
+        async with self.sessions() as session:
+            self.assertEqual(await session.scalar(select(func.count(Recipe.id))), len(SAMPLE_RECIPES) + 1)
+            self.assertEqual(await session.scalar(select(func.count(RecipeLookup.query))), 2)
+        again = await find_or_fetch_recipe('new dish', provider)
+        self.assertEqual(again.status, 'local')
+
+    async def test_source_migration_preserves_existing_recipes(self):
+        async with self.engine.begin() as connection:
+            await connection.execute(text('ALTER TABLE recipes DROP COLUMN source'))
+        await db.init_db()
+        await db.init_db()
+        async with self.sessions() as session:
+            recipes = await service.get_all_recipes(session)
+            self.assertEqual(len(recipes), len(SAMPLE_RECIPES))
+            self.assertTrue(all(recipe.source == 'bundled' for recipe in recipes))
+
+    async def test_http_provider_contract_with_mocked_network(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from services.external_recipe_provider import HttpRecipeProvider, ProviderError
+        response = MagicMock(status=200)
+        async def chunks():
+            yield b'{"recipe":'
+            yield b'null}'
+        response.content.iter_chunked.return_value = chunks()
+        response_context = MagicMock()
+        response_context.__aenter__ = AsyncMock(return_value=response)
+        session = MagicMock()
+        session.post.return_value = response_context
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        with patch('services.external_recipe_provider.aiohttp.ClientSession', return_value=session_context):
+            self.assertIsNone(await HttpRecipeProvider('https://example.invalid/recipes').fetch('борщ'))
+            self.assertEqual(session.post.call_args.kwargs['json'], {'query': 'борщ', 'language': 'ru'})
+            response.status = 500
+            with self.assertRaises(ProviderError):
+                await HttpRecipeProvider('https://example.invalid/recipes').fetch('борщ')
+
+    async def test_popular_catalog_coverage_and_plain_html(self):
+        from data.popular_recipes import POPULAR_RECIPES
+        from data.recipe_search import EXISTING_EQUIVALENTS
+        from handlers.recipes import format_recipe
+        import xml.etree.ElementTree as ET
+        import re
+        self.assertEqual(len(POPULAR_RECIPES), 93)
+        self.assertEqual(len(POPULAR_RECIPES) + len(EXISTING_EQUIVALENTS), 100)
+        self.assertEqual(len({r['name'] for r in SAMPLE_RECIPES}), len(SAMPLE_RECIPES))
+        async with self.sessions() as session:
+            for requested, stored_name in EXISTING_EQUIVALENTS.items():
+                self.assertIn(stored_name, [r.name for r in await service.search_by_name(session, requested)])
+            for sample in POPULAR_RECIPES:
+                recipe = (await service.search_by_name(session, sample['name']))[0]
+                self.assertEqual(recipe.name, sample['name'])
+                self.assertGreaterEqual(len(recipe.instructions.splitlines()), 4)
+                self.assertGreater(recipe.cooking_time, 0)
+                self.assertGreater(recipe.servings, 0)
+                for ingredient in recipe.ingredients.splitlines():
+                    self.assertIn(' — ', ingredient)
+                    self.assertTrue(re.search(r'\d|[¼½¾]|по вкусу', ingredient), ingredient)
+                self.assertNotRegex(recipe.instructions, r'<b>|\*\*|^1\.')
+                card = format_recipe(recipe, 'ru')
+                ET.fromstring('<root>' + card + '</root>')
+                self.assertLess(len(card.encode('utf-16-le')) // 2, 4096)
+            selected = await service.get_random_recipe(session)
+            self.assertIsNotNone(selected)
+            self.assertEqual(len(await service.get_categories(session)), 12)
+
+    async def test_ranked_russian_queries_and_ingredients(self):
+        from services.recipe_lookup import find_or_fetch_recipe
+        from unittest.mock import AsyncMock
+        expected = {
+            'борщ': 'Борщ', 'блины': 'Блины на молоке', 'блинчики': 'Блины на молоке',
+            'пельмени': 'Домашние пельмени', 'карбонара': 'Паста Карбонара',
+            'курица': 'Курица с грибами', 'курица грибы': 'Курица с грибами',
+            'картошка с мясом': 'Жаркое с картошкой', 'фарш': 'Макароны по-флотски',
+            'творог': 'Сырники', 'сырники': 'Сырники', 'оливье': 'Оливье',
+            'шарлотка': 'Шарлотка с яблоками', 'плов': 'Плов',
+            'сырник': 'Сырники', 'суп курица': 'Куриный суп с лапшой',
+            'макароны с фаршем': 'Макароны по-флотски', 'котлеты': 'Котлеты домашние',
+        }
+        async with self.sessions() as session:
+            for query, name in expected.items():
+                results = await service.search_by_name(session, '  ' + query.upper() + '  ')
+                self.assertIn(name, [r.name for r in results[:10]], query)
+            self.assertEqual((await service.search_by_name(session, 'борщ'))[0].name, 'Борщ')
+            self.assertEqual((await service.search_by_name(session, '  ЕЖИКИ   с рисом '))[0].name, 'Ёжики с рисом')
+            for query, name in [('курица картошка', 'Курица с картошкой в духовке'),
+                                ('фарш картошка', 'Картофельная запеканка с фаршем'),
+                                ('грибы курица', 'Паста с курицей и грибами'),
+                                ('творог', 'Печенье из творога')]:
+                self.assertIn(name, [r.name for r in await service.search_by_ingredients(session, [query])])
+            self.assertEqual(await service.search_by_name(session, 'соль'), [])
+            self.assertEqual(await service.search_by_ingredients(session, ['вода', 'соль']), [])
+        provider = AsyncMock()
+        result = await find_or_fetch_recipe('курица грибы', provider)
+        self.assertEqual(result.status, 'matches')
+        self.assertIn('Курица с грибами', [r.name for r in result.matches])
+        provider.fetch.assert_not_called()
+
+    async def test_equivalent_seed_names_and_legacy_repair(self):
+        from data.recipe_repairs import GREEK_SALAD_ORIGINAL, GREEK_SALAD_COMPLETE
+        async with self.sessions() as session:
+            pancakes = (await service.search_by_name(session, 'Блины на молоке'))[0]
+            pancakes.name = 'Блины'
+            salad = (await service.search_by_name(session, 'Greek Salad'))[0]
+            for key, value in GREEK_SALAD_ORIGINAL.items():
+                setattr(salad, key, value)
+            await session.commit()
+            salad_id = salad.id
+            await service.add_favorite(session, 678, salad.id)
+        await db.init_db()
+        await db.init_db()
+        async with self.sessions() as session:
+            self.assertEqual(await session.scalar(select(func.count(Recipe.id))), len(SAMPLE_RECIPES))
+            salad = await session.get(Recipe, salad_id)
+            self.assertEqual(salad.ingredients, GREEK_SALAD_COMPLETE['ingredients'])
+            self.assertTrue(await service.is_favorite(session, 678, salad_id))
+            salad.description = 'Пользовательский текст'
+            salad.ingredients = GREEK_SALAD_ORIGINAL['ingredients']
+            await session.commit()
+        await db.init_db()
+        async with self.sessions() as session:
+            salad = await session.get(Recipe, salad_id)
+            self.assertEqual(salad.description, 'Пользовательский текст')
+            self.assertEqual(salad.ingredients, GREEK_SALAD_ORIGINAL['ingredients'])

@@ -21,6 +21,7 @@ TEXTS = {
     'choose_language': ('Choose your language / Выберите язык:', 'Выберите язык / Choose your language:'),
     'language_saved': ('Language set to English.', 'Выбран русский язык.'),
     'no_matches': ('No matching recipes. Try another search or return to the menu.', 'Рецепты не найдены. Попробуйте другой запрос или вернитесь в меню.'),
+    'results_limit': ('Showing the first 10. Refine your search for more specific results.', 'Показаны первые 10. Уточните запрос, чтобы сузить поиск.'),
     'results': ('Recipes found: {count}. Choose one:', 'Найдено рецептов: {count}. Выберите рецепт:'),
     'ask_name': ('Type a recipe name or part of a name:', 'Введите название рецепта или его часть:'),
     'ask_ingredients': ('Send ingredients separated by commas, for example: chicken, rice, tomato', 'Отправьте ингредиенты через запятую, например: курица, рис, помидор'),
@@ -39,8 +40,8 @@ TEXTS = {
     'instructions': ('Instructions', 'Приготовление'),
 }
 CATEGORIES = dict(zip(
-    ['Breakfast', 'Soups', 'Salads', 'Pasta', 'Main dishes', 'Desserts', 'Drinks'],
-    ['Завтраки', 'Супы', 'Салаты', 'Паста', 'Основные блюда', 'Десерты', 'Напитки'],
+    ['Breakfast', 'Soups', 'Salads', 'Pasta', 'Main dishes', 'Desserts', 'Drinks', 'Meat', 'Chicken', 'Fish', 'Sides', 'Appetizers', 'Baking'],
+    ['Завтраки', 'Супы', 'Салаты', 'Паста', 'Основные блюда', 'Десерты', 'Напитки', 'Мясо', 'Курица', 'Рыба', 'Гарниры', 'Закуски', 'Выпечка'],
 ))
 
 

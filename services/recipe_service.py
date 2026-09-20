@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.sqlite import insert
 
 from database.models import Favorite, Recipe, User
-from data.recipe_translations import INGREDIENT_ALIASES, recipe_text
+from services.recipe_search import rank, ingredient_match, ingredient_tokens, COMMON_WORDS
 from services.localization import normalize_language, canonical_category, CATEGORIES
 
 
@@ -20,17 +20,7 @@ def recipe_ingredients(recipe: Recipe) -> list[str]:
 
 
 def matches_ingredients(recipe: Recipe, requested: list[str]) -> bool:
-    available = recipe_ingredients(recipe) + [
-        normalize_ingredient(item) for item in recipe_text(recipe, "ingredients", "ru").splitlines()
-    ]
-    normalized_requested = [
-        INGREDIENT_ALIASES.get(normalize_ingredient(item), normalize_ingredient(item))
-        for item in requested if item.strip()
-    ]
-    return bool(normalized_requested) and all(
-        any(ingredient in available_item or available_item in ingredient for available_item in available)
-        for ingredient in normalized_requested
-    )
+    return ingredient_match(recipe, requested)
 
 
 async def get_or_create_user(session: AsyncSession, telegram_id: int, language: str = "en") -> User:
@@ -73,19 +63,16 @@ async def get_random_recipe(session: AsyncSession) -> Recipe | None:
 
 
 async def search_by_name(session: AsyncSession, query: str) -> list[Recipe]:
-    normalized = normalize_ingredient(query).casefold()
-    if not normalized:
-        return []
-    return [recipe for recipe in await get_all_recipes(session)
-            if any(normalized in normalize_ingredient(recipe_text(recipe, "name", language))
-                   for language in ("en", "ru"))]
+    matches = [(score, recipe) for recipe in await get_all_recipes(session)
+               if (score := rank(recipe, query)) is not None]
+    return [recipe for _, recipe in sorted(matches, key=lambda item: (item[0], item[1].name))]
 
 
 async def search_by_ingredients(session: AsyncSession, ingredients: list[str]) -> list[Recipe]:
     recipes = await get_all_recipes(session)
     return sorted(
         [recipe for recipe in recipes if matches_ingredients(recipe, ingredients)],
-        key=lambda recipe: (len(recipe_ingredients(recipe)), recipe.name),
+        key=lambda recipe: (len(ingredient_tokens(recipe) - COMMON_WORDS), recipe.name),
     )
 
 

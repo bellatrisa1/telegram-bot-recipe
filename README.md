@@ -142,7 +142,96 @@ users, recipes, and favorites. UI text lives in `services/localization.py`; bund
 recipe translations live in `data/recipe_translations.py`, keyed by English recipe name.
 Additional recipes without a translation display their original content.
 
-The catalog also includes 12 Russian recipes (19 bundled recipes total). Their content
+The catalog also includes 12 Russian recipes (19 recipes in the initial catalog). Their content
 stays in Russian in either interface language. Russian and English category names are
 grouped together. Cooking times are stored as integer minutes; recipe text stays plain
 text, with HTML escaping and numbering applied only when a card is displayed.
+
+## Dynamic dish lookup (local first)
+
+**🍳 Найти рецепт** now asks for a dish name instead of opening the catalog. The name
+search prompt and recipe card are Russian; the existing language preference remains
+available for other menus. Categories are the separate browsing entry point. Ingredient
+search still searches local and cached recipes.
+
+The service normalizes Unicode, case, whitespace, and ё/е, then checks cached query
+aliases and exact names (including existing Russian translations). A small explicit
+alias map handles names like «Блины»; broader queries now return a ranked local selection instead of automatically choosing
+a different dish. External discovery remains available when there are no local matches.
+
+If no match exists, `services/recipe_lookup.py` invokes the `RecipeProvider` interface
+in `services/external_recipe_provider.py`. Valid results are stored in the existing
+`recipes` table with `source=external` or `source=generated`. A `recipe_lookups` table
+maps normalized queries to recipe IDs; it stores no duplicate recipe content. SQLite
+transactions serialize cache writes and recheck both query and returned name before
+inserting. Favorites reference the same recipe IDs. Concurrent cache misses can make
+more than one network request, but do not create duplicate recipe rows.
+
+### Connecting a provider
+
+**No external recipe service is connected by default.** The app does not currently
+retrieve arbitrary dishes from the internet until you connect one. No paid API or LLM
+has been enabled. Local recipes work without configuration; missing recipes show an
+honest unavailable message with retry/menu buttons.
+
+Connect a service you operate or choose that implements this contract, or implement
+`RecipeProvider.fetch()` for a specific vendor. Add these settings to your existing
+`.env` manually, without replacing its other settings:
+
+```dotenv
+RECIPE_PROVIDER_URL=https://your-service.example/recipe
+RECIPE_PROVIDER_API_KEY=your_provider_key_if_required
+```
+
+The URL must be HTTPS. Leave the key empty if the service needs no authentication.
+The adapter sends the key only as an Authorization Bearer header. These variables do
+not work directly with an arbitrary vendor API: its adapter must implement the contract
+below. A separate vendor's fees and credentials depend on the service you choose.
+
+Request: HTTP POST with JSON `{"query": "нормализованное название", "language": "ru"}`.
+Response: HTTP 200 with `{"recipe": null}` when no dish matches, or a `recipe` object:
+
+- `name`, `description`, `category`: Russian plain text.
+- `cooking_time`: positive integer minutes; `servings`: positive integer.
+- `difficulty`: `Легко`, `Средне`, or `Сложно`.
+- `ingredients`: nonempty array of Russian ingredient strings, including quantities.
+- `instructions`: nonempty array of Russian steps, without numbering or markup.
+- `image_url`: optional HTTP(S) URL or null.
+- `source`: `external` (default) or `generated` (must be used for LLM-generated content).
+
+Return the requested dish only, not a loosely related search result. The service must
+perform any translation and supply real recipe metadata; the bot does not invent
+missing values. `RecipePayload.model_json_schema()` exposes the full validation schema.
+Invalid, oversized, English-only, or incomplete responses are rejected rather than
+cached. Requests have bounded timeouts and response sizes; response bodies, credentials,
+and provider exception messages are never logged. Provider failures keep the search
+state active and show Russian retry/menu controls. Telegram displays a typing indicator
+while lookup is running.
+
+Existing databases are upgraded additively on startup. Existing recipe IDs, content,
+users, and favorites are preserved. Test with `python3 -m unittest discover -s tests -v`;
+provider calls are mocked, with no real paid API used in tests.
+
+## Russia/CIS catalog expansion
+
+The seed collection now contains **112 recipes**. The requested 100 popular dishes are
+covered by 93 new recipes in `data/popular_recipes.py` and seven existing equivalents
+(e.g. «Пельмени» uses «Домашние пельмени»). Existing IDs and favorites are retained.
+The untouched original Greek salad is upgraded with missing quantities and detailed
+steps; the repair checks all original fields and skips user-edited records.
+
+All new descriptions and instructions are original Russian text with metric quantities.
+No new tables, dependencies, or database reset are required. Startup inserts missing
+recipes individually, recognizes explicit equivalent names, and preserves existing rows.
+
+Name search ranks exact names, partial names, aliases, distinctive ingredients, then
+matching description/category text. It normalizes case, whitespace, and ё/е, and recognizes
+small explicit Russian word families: «курица грибы», «сырник», «блинчики», «картошка с
+мясом», and «суп курица». Ingredient input supports spaces as well as commas and still
+requires all requested ingredients. Salt/water/oil-only queries are ignored. These are
+lightweight rules, not a full Russian morphological analyzer.
+
+Broad queries show up to ten ranked choices and invite refinement. Categories remain
+the browsing entry point; legacy browse/back callbacks also lead to categories instead
+of trying to render all 112 recipes as one enormous keyboard. The recipe-card formatter
+is unchanged. External API configuration and language preferences remain available.

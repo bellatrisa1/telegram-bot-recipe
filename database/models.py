@@ -27,6 +27,7 @@ class Recipe(Base):
     __tablename__ = "recipes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(20), default="bundled", server_default="bundled")
     name: Mapped[str] = mapped_column(String(200), index=True)
     description: Mapped[str] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(100), index=True)
@@ -56,3 +57,10 @@ class Favorite(Base):
 
     user: Mapped[User] = relationship(back_populates="favorites")
     recipe: Mapped[Recipe] = relationship(back_populates="favorites")
+
+
+class RecipeLookup(Base):
+    __tablename__ = "recipe_lookups"
+
+    query: Mapped[str] = mapped_column(String(200), primary_key=True)
+    recipe_id: Mapped[int] = mapped_column(ForeignKey("recipes.id", ondelete="CASCADE"), index=True)

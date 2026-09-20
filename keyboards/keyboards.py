@@ -42,7 +42,6 @@ def recipe_list_keyboard(recipe_items: list[tuple[int, str]], language: str = "e
 def find_recipe_keyboard(language: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=tr("browse", language), callback_data="browse_recipes")],
             [InlineKeyboardButton(text=tr("search_name", language), callback_data="search_name")],
             [InlineKeyboardButton(text=tr("menu", language), callback_data="menu")],
         ]
@@ -55,7 +54,7 @@ def recipe_actions_keyboard(recipe_id: int, is_favorite: bool, language: str = "
         inline_keyboard=[
             [InlineKeyboardButton(text=favorite_text, callback_data=f"favorite:{'remove' if is_favorite else 'add'}:{recipe_id}")],
             [InlineKeyboardButton(text=tr("another", language), callback_data="random")],
-            [InlineKeyboardButton(text=tr("back", language), callback_data="back_recipes")],
+            [InlineKeyboardButton(text=tr("back", language), callback_data="categories")],
             [InlineKeyboardButton(text=tr("menu", language), callback_data="menu")],
         ]
     )
@@ -66,3 +65,10 @@ def language_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="English", callback_data="language:en"),
         InlineKeyboardButton(text="Русский", callback_data="language:ru"),
     ]])
+
+
+def retry_recipe_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 Попробовать снова", callback_data="search_name")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu")],
+    ])

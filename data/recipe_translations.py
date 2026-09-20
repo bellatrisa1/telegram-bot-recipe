@@ -59,3 +59,21 @@ def recipe_text(recipe: "Recipe", field: str, language: str = 'en') -> str:
     if language == 'ru':
         return RUSSIAN_RECIPES.get(recipe.name, {}).get(field, getattr(recipe, field))
     return getattr(recipe, field)
+
+
+# Explicit dish aliases, not fuzzy substring matches for unrelated dishes.
+LOCAL_NAME_ALIASES = {
+    'carbonara': 'Spaghetti Carbonara',
+    'карбонара': 'Паста Карбонара',
+    'блины': 'Блины на молоке',
+    'пельмени': 'Домашние пельмени',
+    'вареники': 'Вареники с картофелем',
+}
+
+
+# The legacy English identity is kept for existing favorites and translations.
+from data.recipe_repairs import GREEK_SALAD_COMPLETE
+RUSSIAN_RECIPES['Greek Salad'].update({
+    field: GREEK_SALAD_COMPLETE[field]
+    for field in ('description', 'ingredients', 'instructions')
+})

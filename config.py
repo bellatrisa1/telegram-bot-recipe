@@ -24,3 +24,7 @@ def validate_config() -> None:
         validate_token(BOT_TOKEN)
     except TokenValidationError:
         raise RuntimeError("BOT_TOKEN is invalid. Check your private .env file.") from None
+
+# Optional external service; disabled until explicitly configured.
+RECIPE_PROVIDER_URL = os.getenv("RECIPE_PROVIDER_URL", "").strip()
+RECIPE_PROVIDER_API_KEY = os.getenv("RECIPE_PROVIDER_API_KEY", "").strip()

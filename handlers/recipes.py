@@ -14,7 +14,6 @@ from keyboards.keyboards import (
     recipe_list_keyboard,
 )
 from services.recipe_service import (
-    get_all_recipes,
     get_categories,
     get_random_recipe,
     get_recipe,
@@ -66,12 +65,7 @@ async def send_recipe(target: Message | CallbackQuery, recipe_id: int, language:
 
 @router.callback_query(F.data == "browse_recipes")
 async def browse_recipes(callback: CallbackQuery, language: str = "en") -> None:
-    async with SessionFactory() as session:
-        recipes = await get_all_recipes(session)
-    await callback.message.edit_text(
-        tr("choose_recipe", language),
-        reply_markup=recipe_list_keyboard([(recipe.id, recipe_text(recipe, "name", language)) for recipe in recipes], language),
-    )
+    await categories_callback(callback, language)
 
 
 @router.message(F.text.in_(labels("categories")))
@@ -129,9 +123,4 @@ async def random_callback(callback: CallbackQuery, language: str = "en") -> None
 
 @router.callback_query(F.data == "back_recipes")
 async def back_to_recipes(callback: CallbackQuery, language: str = "en") -> None:
-    async with SessionFactory() as session:
-        recipes = await get_all_recipes(session)
-    await callback.message.edit_text(
-        tr("choose_recipe", language),
-        reply_markup=recipe_list_keyboard([(recipe.id, recipe_text(recipe, "name", language)) for recipe in recipes], language),
-    )
+    await categories_callback(callback, language)
