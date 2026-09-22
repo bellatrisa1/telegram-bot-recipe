@@ -1,6 +1,6 @@
 # Recipe Telegram Bot
 
-A beginner-friendly Telegram recipe bot built with Python, aiogram 3, asyncio, SQLAlchemy, and SQLite.
+Telegram recipe bot built with Python, aiogram 3, asyncio, SQLAlchemy, and SQLite.
 
 ## Before you start
 
